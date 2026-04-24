@@ -1,0 +1,68 @@
+version: '3.9'
+
+services:
+  # ── MySQL Database ──────────────────────────────────────────
+  db:
+    image: mysql:8.4
+    container_name: shadow-cc-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-shadow_root_secret}
+      MYSQL_DATABASE: ${DB_NAME:-shadow_command_center}
+      MYSQL_USER: ${DB_USER:-shadow}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-shadow_secret}
+    ports:
+      - '3306:3306'
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${DB_ROOT_PASSWORD:-shadow_root_secret}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Fastify API ─────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../infra/Dockerfile.backend
+    container_name: shadow-cc-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-shadow}
+      DB_PASSWORD: ${DB_PASSWORD:-shadow_secret}
+      DB_NAME: ${DB_NAME:-shadow_command_center}
+      PORT: 3001
+    ports:
+      - '3001:3001'
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/api/health']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Next.js Frontend ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../infra/Dockerfile.frontend
+    container_name: shadow-cc-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NODE_ENV: production
+    ports:
+      - '3000:3000'
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
+    driver: local
